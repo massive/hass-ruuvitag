@@ -1,105 +1,57 @@
-import fetch, { Response } from "node-fetch";
-import { Config, Tag, TagConfig, TagData } from "./types";
+import {AppConfig, MetricOptions, SubscribableData, TagConfig, TagData, TagDefinition, TopicType} from "./types";
+import {Client} from 'mqtt'
+import logger from "./logger"
 
-interface Datum {
-  url: string;
-  payload: object;
+type MetricName = keyof SubscribableData | "";
+
+function topicFor(id: string, metric: MetricName = "", type: TopicType = TopicType.DEFAULT) {
+  return ["homeassistant", "sensor", id, metric, type].filter(v => v.length > 0).join("/")
 }
 
-interface HassStateData {
-  state: number;
-  attributes: { [key: string]: any };
+function createMetricDefinition(options: MetricOptions, tagConfig: TagConfig): TagDefinition {
+  const attributes: TagDefinition = {};
+
+  if (options.unit) {
+    attributes.unit_of_measurement = options.unit;
+  }
+  if (options.deviceClass) {
+    attributes.device_class = options.deviceClass;
+  }
+
+  return attributes;
 }
 
-interface WrappedResponseOrError {
-  datum: Datum;
-  response?: Response;
-  error?: Error;
-}
+export function createMetrics(mqttClient: Client, appConfig: AppConfig, tagConfig: TagConfig) {
 
-function doDatumRequest(config: Config, datum: Datum): Promise<WrappedResponseOrError> {
-  return fetch(datum.url, {
-    method: "post",
-    body: JSON.stringify(datum.payload),
-    headers: {
-      "Content-Type": "application/json",
-      "X-HA-Access": config.hassToken || "1",
-    },
+  const metricMap: MetricOptions[] = [
+      { name: "temperature", unit: "°C", deviceClass: "temperature" },
+      { name: "pressure", unit: "hPa", deviceClass: "pressure", scalingFactor: 1 / 100 },
+      { name: "humidity", unit: "%", deviceClass: "humidity" },
+      { name: "battery", unit: "mV" },
+      { name: "acceleration", unit: "mG" },
+      { name: "accelerationX", unit: "mG" },
+      { name: "accelerationY", unit: "mG" },
+      { name: "accelerationZ", unit: "mG" },
+  ];
+
+  metricMap.forEach(metric => {
+    if (!tagConfig[metric.name]) return;
+
+    const attributes = createMetricDefinition(metric, tagConfig);
+    const topic = topicFor(tagConfig.id, metric.name, TopicType.CONFIG);
+    mqttClient.publish(topic, JSON.stringify(attributes));
+    if (appConfig.debug) {
+        logger.debug(topic);
+        logger.debug(attributes)
+    }
   })
-    .then(response => ({ datum, response }))
-    .catch(error => ({ datum, error }));
 }
 
-function reportResponse(tag: Tag, { datum, response, error }: WrappedResponseOrError) {
-  if (error) {
-    console.error(`tag ${tag.id}: failed 1 ${datum.url}: ${error}`);
-    return;
+export function updateTagState(mqttClient: Client, config: AppConfig, tagConfig: TagConfig, data: TagData) {
+  if (config.debug) {
+    logger.debug(data);
   }
-  if (response && response.status >= 400) {
-    response.text().then(text => {
-      console.error(`tag ${tag.id}: failed 2 ${datum.url}: ${text}`);
-    });
-  }
+
+  const topic = topicFor(tagConfig.id);
+  mqttClient.publish(topic, JSON.stringify(data));
 }
-
-export function createTagDataPayloads(
-  config: Config,
-  tag: Tag,
-  tagConfig: TagConfig,
-  data: TagData,
-): Datum[] {
-  const postData: Datum[] = [];
-
-  function addSimpleNumber(
-    key: keyof TagConfig & keyof TagData,
-    unit?: string,
-    deviceClass?: string,
-    scalingFactor: number = 1,
-  ) {
-    if (!tagConfig[key]) {
-      // not enabled?
-      return false;
-    }
-    const value = data[key];
-    if (value !== undefined && Number.isFinite(value)) {
-      const payload: HassStateData = { state: value * scalingFactor, attributes: {} };
-      if (unit) {
-        payload.attributes.unit_of_measurement = unit;
-      }
-      if (deviceClass) {
-        payload.attributes.device_class = deviceClass;
-      }
-
-      postData.push({
-        url: `${config.hassHost}api/states/sensor.${tagConfig.name}_${key}`,
-        payload,
-      });
-      return true;
-    }
-  }
-
-  addSimpleNumber("temperature", "°C", "temperature");
-  addSimpleNumber("pressure", "hPa", "pressure", 1 / 100);
-  addSimpleNumber("humidity", "%", "humidity");
-  addSimpleNumber("battery", "mV");
-  addSimpleNumber("acceleration", "mG");
-  addSimpleNumber("accelerationX", "mG");
-  addSimpleNumber("accelerationY", "mG");
-  addSimpleNumber("accelerationZ", "mG");
-  return postData;
-}
-
-export function postTag(config: Config, tag: Tag, tagConfig: TagConfig, data: TagData) {
-  const postData = createTagDataPayloads(config, tag, tagConfig, data);
-  if (config.debug & 1) {
-    console.info(postData);
-  }
-  return Promise.all(postData.map(datum => doDatumRequest(config, datum))).then(
-    responses => {
-      responses.forEach(response => reportResponse(tag, response));
-      return responses;
-    },
-  );
-}
-
-module.exports.postTag = postTag;

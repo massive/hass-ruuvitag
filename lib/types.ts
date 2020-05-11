@@ -13,19 +13,6 @@ export interface TagConfig {
   interval?: number;
 }
 
-export interface Config {
-  interval: number;
-  debug: 0;
-  tags: TagConfig[];
-  hassHost: string;
-  hassToken?: string;
-}
-
-export interface Tag {
-  id: string;
-  on: (event: string, handler: (data: TagData) => void) => void;
-}
-
 export interface TagData {
   timestamp?: number;
   dataFormat?: number;
@@ -38,4 +25,43 @@ export interface TagData {
   accelerationZ: number;
   acceleration?: number; // computed by ourselves
   battery: number;
+}
+
+export type SubscribableData = TagConfig | TagData
+
+export interface AppConfig {
+  interval: number;
+  debug: boolean;
+  tags: TagConfig[];
+  mqtt: {
+    host: string;
+    port: string;
+    user?: string
+    password?: string;
+  }
+}
+
+export interface Tag {
+  id: string;
+  on: (event: string, handler: (data: TagData) => void) => void;
+}
+
+export type TagDefinition = { [key: string]: any };
+
+export enum TopicType {
+  DEFAULT = "",
+  CONFIG = "config"
+}
+
+export enum TagConfigState {
+  UNKNOWN,
+  DISABLED,
+  ENABLED
+}
+
+export interface MetricOptions {
+  name: keyof SubscribableData
+  unit: string,
+  deviceClass?: string,
+  scalingFactor?: number
 }

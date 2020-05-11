@@ -1,13 +1,16 @@
 import { calculateAcceleration } from "../lib/calc";
 
-jest.mock("node-fetch");
-import _fetch from "node-fetch";
-import { getBaseConfig } from "../lib/config";
+import { getAppConfig } from "../lib/config";
 import Manager from "../lib/Manager";
-import { Tag } from "../lib/types";
+import {Tag, TagConfig} from "../lib/types";
 
-const fetch: jest.MockInstance<any, any[]> = (_fetch as unknown) as jest.MockInstance<any, any[]>;
-const { Response } = require.requireActual("node-fetch");
+import mqtt, {Client, MqttClient} from 'mqtt';
+import { mock } from 'jest-mock-extended';
+import {createMetrics, updateTagState} from "../lib/hass-interface";
+import logger from "../lib/logger"
+
+jest.mock("mqtt");
+jest.mock("../lib/logger");
 
 const data = {
   dataFormat: 3,
@@ -30,34 +33,97 @@ const tag: Tag = {
   },
 };
 
+function getTagConfig(attrs: Partial<TagConfig>): TagConfig {
+  const base = {
+    id: tag.id,
+    name: "somename",
+    enabled: true,
+    temperature: false,
+    pressure: false,
+    humidity: false,
+    battery: false,
+    acceleration: false,
+    accelerationX: false,
+    accelerationY: false,
+    accelerationZ: false,
+  };
+
+  return { ...base, ...attrs };
+}
 describe("Manager", () => {
+
   it("informs the user about unconfigured tags", () => {
-    const manager = new Manager(getBaseConfig());
-    const logSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
+    const manager = new Manager(getAppConfig(), mock<MqttClient>());
+    const logSpy = jest.spyOn(logger, "info").mockImplementation();
     manager.handleRuuviUpdate(tag, data);
     expect(logSpy).toHaveBeenCalled();
     expect(logSpy.mock.calls[0][0]).toMatch(`unconfigured tag ${tag.id}`);
     logSpy.mockRestore();
   });
-  it("does something with configured tags", () => {
-    fetch.mockReturnValue(Promise.resolve(new Response("4")));
 
-    const config = getBaseConfig();
-    config.tags.push({
-      id: tag.id,
-      name: "somename",
-      enabled: true,
+  it("sends discovery messages", () => {
+    const appConfig = getAppConfig();
+    const tagConfig = getTagConfig({
       temperature: true,
       pressure: true,
-      humidity: true,
-      battery: true,
-      acceleration: true,
-      accelerationX: true,
-      accelerationY: true,
-      accelerationZ: true,
     });
-    const manager = new Manager(config);
+
+    appConfig.tags.push(tagConfig);
+
+    const mockClient = mock<MqttClient>();
+    createMetrics(mockClient, appConfig, tagConfig);
+
+    expect(mockClient.publish).toHaveBeenCalledTimes(2)
+    expect(mockClient.publish).toHaveBeenNthCalledWith(1,"homeassistant/sensor/f00f00f00/temperature/config", JSON.stringify({ "unit_of_measurement": '°C', "device_class": "temperature" }))
+    expect(mockClient.publish).toHaveBeenNthCalledWith(2,"homeassistant/sensor/f00f00f00/pressure/config", JSON.stringify({ "unit_of_measurement": 'hPa', "device_class": "pressure" }))
+  });
+
+  it("updates tag state", () => {
+    const appConfig = getAppConfig();
+    const tagConfig = getTagConfig({
+      temperature: true,
+      pressure: true,
+    });
+
+    const mockClient = mock<MqttClient>();
+    appConfig.tags.push(tagConfig);
+
+    updateTagState(mockClient, appConfig, tagConfig, data);
+
+    expect(mockClient.publish).toHaveBeenCalledTimes(1)
+    expect(mockClient.publish).toHaveBeenNthCalledWith(1,"homeassistant/sensor/f00f00f00", JSON.stringify(data))
+  });
+
+  it("Manager creates discovery messages and updates tag state", () => {
+    const appConfig = getAppConfig();
+    appConfig.debug = true;
+    const tagConfig = getTagConfig({
+      temperature: true
+    });
+
+    const mockClient = mock<MqttClient>();
+
+    const manager = new Manager(appConfig, mockClient);
+    appConfig.tags.push(tagConfig);
     manager.handleRuuviUpdate(tag, data);
-    expect(fetch.mock.calls).toHaveLength(8); // all enabled features
+
+    expect(mockClient.publish).toHaveBeenCalledTimes(2)
+    expect(mockClient.publish).toHaveBeenNthCalledWith(1,"homeassistant/sensor/f00f00f00/temperature/config", JSON.stringify({ "unit_of_measurement": '°C', "device_class": "temperature" }))
+    expect(mockClient.publish).toHaveBeenNthCalledWith(2,"homeassistant/sensor/f00f00f00", JSON.stringify(data))
+  });
+
+  it("does nothing for disabled tags", () => {
+    const appConfig = getAppConfig();
+    const tagConfig = getTagConfig({
+      enabled: false
+    });
+
+    const mockClient = mock<MqttClient>();
+
+    const manager = new Manager(appConfig, mockClient);
+    appConfig.tags.push(tagConfig);
+    manager.handleRuuviUpdate(tag, data);
+
+    expect(mockClient.publish).toHaveBeenCalledTimes(0);
   });
 });
