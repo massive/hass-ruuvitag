@@ -11,8 +11,9 @@ import logger from "./lib/logger";
 logger.info(`This is ${packageInfo.name} ${packageInfo.version}, terrrrrrrve`);
 
 const config = readConfig(process.env.OPTIONS_JSON_PATH || "/data/options.json");
-if (!config.mqtt.host || config.mqtt.host === "") {
-  logger.warn("AppConfig: no host given, will probably not be able to update data");
+if (!config.mqtt.host) {
+  logger.emerg("AppConfig: no host given, will not be able to update data");
+  process.exit(1);
 }
 
 ruuvidriver.init();
@@ -23,7 +24,7 @@ ruuvi.on("found", (tag: Tag) => {
 });
 
 const client = mqtt.connect(config.mqtt.host, {
-  port: parseInt(config.mqtt.port, 10)
+  port: config.mqtt.port
 });
 
 client.on('error', (e) => logger.error(e.toString()));

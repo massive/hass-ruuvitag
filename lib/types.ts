@@ -34,8 +34,8 @@ export interface AppConfig {
   debug: boolean;
   tags: TagConfig[];
   mqtt: {
-    host: string;
-    port: string;
+    host: string | undefined;
+    port: number;
     user?: string
     password?: string;
   }

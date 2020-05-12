@@ -16,10 +16,8 @@ RUN apk add --no-cache nodejs libusb-dev bluez-dev linux-headers eudev-dev
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/js /app
 WORKDIR /app
-#RUN setcap cap_net_raw+eip $(eval readlink -f `which node`)
-#CMD [ "node", "app.js" ]
 
-# Add run script
-COPY run.sh /run.sh
+COPY run.sh /
+RUN chmod a+x /run.sh
 
-CMD [ "/run.sh", "node", "app.js" ]
+CMD [ "/run.sh" ]
