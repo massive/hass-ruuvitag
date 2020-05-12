@@ -12,7 +12,7 @@ logger.info(`This is ${packageInfo.name} ${packageInfo.version}, terrrrrrrve`);
 
 const config = readConfig(process.env.OPTIONS_JSON_PATH || "/data/options.json");
 if (!config.mqtt.host) {
-  logger.emerg("AppConfig: no host given, will not be able to update data");
+  logger.error("AppConfig: no host given, will not be able to update data");
   process.exit(1);
 }
 
